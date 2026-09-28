@@ -1,44 +1,53 @@
 # amentoi-cli
 
-One CLI for the Amen Toi services. A workspace API key is exchanged through Core for a five-minute service token. The service checks its own permissions and subscription features on every command.
+An [api2cli](https://api2cli.dev/docs/create-cli) scaffold adapted for the Amen Toi multi-service API. Commands are organized by resource, have help at every level, and support `--json` for agent workflows. The shared workspace API key is sent only to Core. Core exchanges it for a five-minute, audience-bound token for Link, Forms, or People. Each service still checks its own permissions and entitlements.
 
 ## Install
 
-```bash
-npm install -g https://github.com/t0piCyb/amentoi-cli/releases/download/v0.1.0/amentoi-cli-0.1.0.tgz
-amentoi --help
-```
-
-Create a workspace API key in Core with the scopes needed by your tasks. Omit `expiresAt` for a key that does not expire. It remains revocable. Keep its secret private; Core shows it only at creation.
+[Bun](https://bun.sh/) is required for the api2cli binary. Download the release package:
 
 ```bash
-amentoi config set core https://YOUR-CORE-API
-amentoi config set link https://link.amentoi.com
-amentoi config set forms https://forms.amentoi.com
-printf '%s' "$AMENTOI_API_KEY" | amentoi auth save
-amentoi auth status
+npm install -g https://github.com/t0piCyb/amentoi-cli/releases/download/v0.2.0/amentoi-cli-0.2.0.tgz
+amentoi-cli --help
 ```
 
-The configuration file is stored at `~/.config/amentoi/cli.json` with mode `0600`. You can instead use `AMENTOI_API_KEY` and `AMENTOI_<SERVICE>_URL` environment variables. The key is sent only to Core; product services receive a short session.
+The repository also has `skills/amentoi-cli/SKILL.md` for agents and can be installed by `npx api2cli install t0piCyb/amentoi-cli` once the repository is published.
 
-## Examples
+## Configure
 
 ```bash
-amentoi link create mon-profil 'Mon profil'
-amentoi link add PAGE_ID https://example.com 'Mon site'
-amentoi link publish PAGE_ID
-amentoi link window PAGE_ID BLOCK_ID 2026-10-01T09:00:00+02:00 2026-10-31T23:59:00+01:00
-amentoi link image PAGE_ID https://example.com --output preview.webp
-amentoi link thumbnail PAGE_ID BLOCK_ID --file preview.webp
-amentoi link publish PAGE_ID
-amentoi link stats PAGE_ID --days 30
-amentoi forms create 'Contact' contact --file schema.json
-amentoi forms publish FORM_ID
-amentoi forms responses FORM_ID --limit 50
-amentoi forms stats
-amentoi tools people
-amentoi tool people list_people --data '{}'
-amentoi api link GET /v1/link/pages
+amentoi-cli config set core https://api.dev.amentoi.com
+amentoi-cli config set link https://link.dev.amentoi.com
+amentoi-cli config set forms https://forms.dev.amentoi.com
+amentoi-cli config set people https://people.dev.amentoi.com
+printf '%s' "$AMENTOI_API_KEY" | amentoi-cli auth set
+amentoi-cli auth test --json
 ```
 
-`amentoi api` exposes each service's existing `/v1` operations without claiming an endpoint that service has not implemented. `amentoi tools` discovers available tools on services that publish a tool registry. A 403 means the key lacks a permission or feature; a 404 may mean the resource is outside the key's workspace.
+Create the key in Core for the right workspace and scopes. If `expiresAt` is omitted at creation, the key does not expire automatically; it can still be revoked or rotated. The five-minute service tokens are never saved. The CLI checks `AMENTOI_API_KEY` first, then `~/.config/tokens/amentoi-cli.txt` (mode 0600), then the previous `~/.config/amentoi/cli.json` key. Service URLs can also come from `AMENTOI_<SERVICE>_URL` environment variables.
+
+Core currently has key-session routes for Link, Forms, and People in staging. Songs and Liturgy do not have key-session routes. Production requires deploying the Core key-session endpoint before these commands can authenticate there. A key's effective permissions are the intersection of its creation-time permissions, current creator permissions, requested scopes, and product installation/entitlement.
+
+## Commands
+
+```bash
+amentoi-cli pages list --json
+amentoi-cli pages create --slug mon-profil --title 'Mon profil' --json
+amentoi-cli pages get PAGE_ID --json
+amentoi-cli blocks create PAGE_ID --type LINK --data '{"url":"https://example.com","label":"Site"}' --json
+amentoi-cli blocks window PAGE_ID BLOCK_ID --from 2026-10-01T09:00:00Z --until null --json
+amentoi-cli blocks image PAGE_ID --url https://example.com/image.png --output preview.webp --json
+amentoi-cli blocks thumbnail PAGE_ID BLOCK_ID --file preview.webp --json
+amentoi-cli pages publish PAGE_ID --json
+amentoi-cli pages stats PAGE_ID --days 30 --json
+amentoi-cli forms create --file form.json --json
+amentoi-cli forms publish FORM_ID --json
+amentoi-cli submissions list FORM_ID --limit 50 --json
+amentoi-cli forms stats --json
+amentoi-cli tools list people --json
+amentoi-cli api call link GET /v1/link/pages --json
+```
+
+`form.json` is the full API body with `name`, `slug`, and `schema`. Run `amentoi-cli <resource> <action> --help` for each action's flags and examples.
+
+The `amentoi` binary from v0.1.0 remains available for existing scripts. The `amentoi-cli` binary is the api2cli-based interface. Core and each product service enforce permissions; `--json` returns `{ "ok": true, "data": ..., "meta": ... }` or a structured error and a nonzero exit code.

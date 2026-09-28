@@ -1,0 +1,73 @@
+import { getToken } from './auth.js'
+import { serviceUrl, type Service } from './config.js'
+import { CliError } from './errors.js'
+
+type Method = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE'
+type Body = Record<string, unknown> | unknown[] | undefined
+
+async function fetchJson(url: string, init: RequestInit): Promise<unknown> {
+  const response = await fetch(url, { ...init, redirect: 'error', signal: AbortSignal.timeout(30_000) })
+  const result = await response.json().catch(() => null) as { error?: { code?: string; message?: string } } | null
+  if (!response.ok) throw new CliError(response.status, result?.error?.message ?? response.statusText)
+  return result
+}
+
+function endpoint(base: string, path: string, query?: Record<string, string | undefined>): string {
+  if (!path.startsWith('/v1/') || path.startsWith('//')) throw new Error('Only /v1/ paths are allowed')
+  const url = new URL(path, base)
+  if (url.origin !== new URL(base).origin) throw new Error('Cross-origin API path refused')
+  for (const [key, value] of Object.entries(query ?? {})) if (value !== undefined) url.searchParams.set(key, value)
+  return url.toString()
+}
+
+async function headersFor(service: Service): Promise<Record<string, string>> {
+  const key = getToken()
+  if (service === 'core') return { 'x-api-key': key }
+  const response = await fetchJson(endpoint(serviceUrl('core'), `/v1/products/${service}/key-session`), {
+    method: 'POST', headers: { 'x-api-key': key },
+  }) as { data?: { token?: string } }
+  if (!response.data?.token) throw new Error(`Core returned no ${service} session token`)
+  return { Authorization: `Bearer ${response.data.token}` }
+}
+
+export async function request(service: Service, method: Method, path: string, body?: Body, query?: Record<string, string | undefined>): Promise<unknown> {
+  const headers = await headersFor(service)
+  if (body !== undefined) headers['Content-Type'] = 'application/json'
+  return fetchJson(endpoint(serviceUrl(service), path, query), {
+    method, headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  })
+}
+
+export function clientFor(service: Service) {
+  return {
+    get: (path: string, query?: Record<string, string | undefined>) => request(service, 'GET', path, undefined, query),
+    post: (path: string, body?: Body) => request(service, 'POST', path, body),
+    patch: (path: string, body?: Body) => request(service, 'PATCH', path, body),
+    put: (path: string, body?: Body) => request(service, 'PUT', path, body),
+    delete: (path: string) => request(service, 'DELETE', path),
+  }
+}
+
+export async function requestBytes(service: Service, method: Method, path: string, body: Body): Promise<{ bytes: Uint8Array; contentType: string | null }> {
+  const headers = await headersFor(service)
+  headers['Content-Type'] = 'application/json'
+  const response = await fetch(endpoint(serviceUrl(service), path), {
+    method, headers, body: JSON.stringify(body), redirect: 'error', signal: AbortSignal.timeout(30_000),
+  })
+  if (!response.ok) {
+    const result = await response.json().catch(() => null) as { error?: { message?: string } } | null
+    throw new CliError(response.status, result?.error?.message ?? response.statusText)
+  }
+  return { bytes: new Uint8Array(await response.arrayBuffer()), contentType: response.headers.get('content-type') }
+}
+
+export async function uploadBytes(service: Service, path: string, bytes: Uint8Array, contentType: string): Promise<unknown> {
+  const headers = await headersFor(service)
+  headers['Content-Type'] = contentType
+  const response = await fetch(endpoint(serviceUrl(service), path), {
+    method: 'POST', headers, body: new Blob([Uint8Array.from(bytes)]), redirect: 'error', signal: AbortSignal.timeout(30_000),
+  })
+  const result = await response.json().catch(() => null) as { error?: { message?: string } } | null
+  if (!response.ok) throw new CliError(response.status, result?.error?.message ?? response.statusText)
+  return result
+}

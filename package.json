@@ -1,15 +1,17 @@
 {
   "name": "amentoi-cli",
-  "version": "0.1.0",
-  "description": "CLI for Amen Toi services, using workspace API keys and server-side permissions",
+  "version": "0.2.0",
+  "description": "api2cli-based CLI for Amen Toi services with shared workspace API keys",
   "type": "module",
-  "bin": { "amentoi": "./bin/amentoi.js" },
-  "files": ["bin", "README.md"],
-  "engines": { "node": ">=22.12.0" },
+  "bin": { "amentoi-cli": "./dist/index.js", "amentoi": "./bin/amentoi.js" },
+  "files": ["bin", "dist", "src", "skills", "README.md", "tsconfig.json"],
+  "engines": { "bun": ">=1.2.0" },
   "scripts": {
-    "typecheck": "node --check bin/amentoi.js",
+    "typecheck": "tsc --noEmit",
     "lint": "node --check bin/amentoi.js",
-    "test": "node --test",
-    "build": "node --check bin/amentoi.js"
-  }
+    "test": "bun run build && node --test",
+    "build": "bun build src/index.ts --outfile dist/index.js --target bun"
+  },
+  "dependencies": { "commander": "^13.0.0", "picocolors": "^1.1.0" },
+  "devDependencies": { "@types/bun": "^1.2.0", "typescript": "^5.7.0" }
 }

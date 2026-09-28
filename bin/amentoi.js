@@ -4,7 +4,7 @@ import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 
 const configPath = process.env.AMENTOI_CONFIG ?? join(homedir(), '.config', 'amentoi', 'cli.json')
-const services = new Set(['core', 'link', 'forms', 'people', 'songs', 'liturgy'])
+const services = new Set(['core', 'link', 'forms', 'people'])
 const usage = `amentoi-cli
 
   amentoi config set <service> <https://api-origin>
@@ -82,7 +82,7 @@ async function call(url, path, init = {}, binary = false) {
 
 async function main(args) {
   if (args.length === 0 || args.includes('--help') || args[0] === 'help') { process.stdout.write(usage); return }
-  if (args.includes('--version')) { process.stdout.write('0.1.0\n'); return }
+  if (args.includes('--version')) { process.stdout.write('0.2.0\n'); return }
   const config = await loadConfig()
   const [command, action, ...rest] = args
   if (command === 'config' && action === 'set') {

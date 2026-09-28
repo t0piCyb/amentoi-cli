@@ -1,0 +1,34 @@
+#!/usr/bin/env bun
+import { Command } from 'commander'
+import { globalFlags } from './lib/config.js'
+import { authCommand } from './commands/auth.js'
+import { configCommand } from './commands/config.js'
+import { pagesResource } from './resources/pages.js'
+import { blocksResource } from './resources/blocks.js'
+import { formsResource } from './resources/forms.js'
+import { submissionsResource } from './resources/submissions.js'
+import { toolsResource } from './resources/tools.js'
+import { apiResource } from './resources/api.js'
+
+const program = new Command()
+program.name('amentoi-cli')
+  .description('Amen Toi services, limited by workspace API key scopes and product rights')
+  .version('0.2.0')
+  .option('--json', 'JSON envelope for agents')
+  .option('--format <fmt>', 'text, json, csv, or yaml', 'text')
+  .option('--verbose', 'Show debug diagnostics')
+  .option('--no-color', 'Disable colors')
+  .option('--no-header', 'Omit table headers')
+  .hook('preAction', (_command, action) => {
+    const opts = action.optsWithGlobals()
+    globalFlags.json = Boolean(opts.json)
+    globalFlags.format = opts.format
+    globalFlags.verbose = Boolean(opts.verbose)
+    globalFlags.noColor = opts.color === false
+    globalFlags.noHeader = opts.header === false
+  })
+
+for (const command of [authCommand, configCommand, pagesResource, blocksResource, formsResource, submissionsResource, toolsResource, apiResource]) {
+  program.addCommand(command)
+}
+program.parse()
