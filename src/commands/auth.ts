@@ -5,7 +5,7 @@ import { globalFlags } from '../lib/config.js'
 import { handleError } from '../lib/errors.js'
 import { run } from '../lib/cli.js'
 
-export const authCommand = new Command('auth').description('Manage the shared workspace API key')
+export const authCommand = new Command('auth').description('Manage the Amen Toi API key')
 
 authCommand.command('set')
   .description('Save a key from stdin; optional argument is less private because shells record it')
@@ -49,11 +49,11 @@ authCommand.command('remove')
   })
 
 authCommand.command('test')
-  .description('Verify the key with Core')
+  .description('Verify the key and list its available workspaces')
   .option('--json', 'Output as JSON')
   .addHelpText('after', '\nExample: amentoi-cli auth test --json')
   .action((opts: { json?: boolean }) => run(async () => {
     if (!hasToken()) throw new Error('No API key configured')
-    await clientFor('core').get('/v1/tools')
-    return { data: { valid: true }, meta: {} }
+    const workspaces = await clientFor('core').get('/v1/key-workspaces') as { data?: unknown[] }
+    return { data: { valid: true, workspaces: workspaces.data ?? [] }, meta: {} }
   }, opts))
