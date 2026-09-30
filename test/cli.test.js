@@ -52,3 +52,30 @@ test('exchanges the shared key and sends only the short token to Link', async ()
     link.instance.close()
   }
 })
+
+test('legacy amentoi command selects workspace without sending key to People', async () => {
+  const requests = []
+  const core = await server((request, response) => {
+    requests.push({ service: 'core', path: request.url, key: request.headers['x-api-key'], workspace: request.headers['x-amen-workspace-id'] })
+    response.setHeader('content-type', 'application/json')
+    response.end(JSON.stringify({ data: { token: 'people-session' } }))
+  })
+  const people = await server((request, response) => {
+    requests.push({ service: 'people', path: request.url, bearer: request.headers.authorization, key: request.headers['x-api-key'] })
+    response.setHeader('content-type', 'application/json')
+    response.end(JSON.stringify({ data: { counts: {} } }))
+  })
+  try {
+    const result = await run(['--workspace', 'org-id', 'people', 'overview'], {
+      AMENTOI_API_KEY: key, AMENTOI_CORE_URL: core.url, AMENTOI_PEOPLE_URL: people.url,
+    })
+    assert.equal(result.code, 0, result.stderr)
+    assert.deepEqual(requests, [
+      { service: 'core', path: '/v1/products/people/key-session', key, workspace: 'org-id' },
+      { service: 'people', path: '/v1/people/overview', bearer: 'Bearer people-session', key: undefined },
+    ])
+  } finally {
+    core.instance.close()
+    people.instance.close()
+  }
+})

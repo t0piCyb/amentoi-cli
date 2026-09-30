@@ -1,10 +1,10 @@
 import { Command } from 'commander'
 import { clientFor } from '../lib/client.js'
 import { id, run, parseBody, type DataOptions } from '../lib/cli.js'
-import { SERVICE_NAMES, type Service } from '../lib/config.js'
+import { isServiceName, type Service } from '../lib/config.js'
 
 function service(name: string): Service {
-  if (!SERVICE_NAMES.includes(name as Service)) throw new Error(`Unsupported service: ${name}`)
+  if (!isServiceName(name)) throw new Error(`Unsupported service: ${name}`)
   return name as Service
 }
 export const toolsResource = new Command('tools').description('Discover and call service tools')

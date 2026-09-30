@@ -5,11 +5,16 @@ import { dirname, join } from 'node:path'
 
 const configPath = process.env.AMENTOI_CONFIG ?? join(homedir(), '.config', 'amentoi', 'cli.json')
 const services = new Set(['core', 'link', 'forms', 'people'])
+const isService = (service) => /^[a-z][a-z0-9]{2,23}$/.test(service ?? '') && !['identity', 'billing'].includes(service)
+const productionUrls = { core: 'https://api.amentoi.com', link: 'https://link-api.amentoi.com', forms: 'https://forms-api.amentoi.com', people: 'https://people-api.amentoi.com' }
 const usage = `amentoi-cli
 
   amentoi config set <service> <https://api-origin>
   amentoi auth save                   Read the shared API key from stdin
   amentoi auth status                 Verify key against Core
+  amentoi workspaces list             List workspaces available to this key
+  amentoi workspaces use <id-or-slug>  Save the active workspace
+  amentoi workspaces current          Show the active workspace
   amentoi services                    Show configured services
   amentoi tools <service>             Discover permitted tools
   amentoi tool <service> <name> [--data JSON | --file PATH]
@@ -27,8 +32,13 @@ const usage = `amentoi-cli
   amentoi forms publish <form-id>
   amentoi forms responses <form-id> [--limit N] [--cursor CURSOR]
   amentoi forms stats
+  amentoi people list [--query TEXT]
+  amentoi people get <person-id>
+  amentoi people overview
+  amentoi people stats [--days N]
 
-Environment: AMENTOI_API_KEY, AMENTOI_<SERVICE>_URL, AMENTOI_CONFIG.
+Global: --workspace <id> overrides the saved workspace for one command.
+Environment: AMENTOI_API_KEY, AMENTOI_WORKSPACE_ID, AMENTOI_<SERVICE>_URL, AMENTOI_CONFIG.
 All output is JSON. API keys have no expiry when created without expiresAt, but can be revoked.
 `
 
@@ -44,9 +54,8 @@ async function saveConfig(config) {
 }
 
 function urlFor(config, service) {
-  if (!services.has(service)) throw new Error(`Unknown service: ${service}`)
-  const raw = process.env[`AMENTOI_${service.toUpperCase()}_URL`] ?? config.urls?.[service]
-  if (!raw) throw new Error(`Configure ${service}: amentoi config set ${service} https://...`)
+  if (!isService(service)) throw new Error(`Unknown service: ${service}`)
+  const raw = process.env[`AMENTOI_${service.toUpperCase()}_URL`] ?? config.urls?.[service] ?? productionUrls[service]
   const url = new URL(raw)
   if (url.protocol !== 'https:' && url.hostname !== 'localhost' && url.hostname !== '127.0.0.1') {
     throw new Error('Service URL must use HTTPS')
@@ -82,12 +91,16 @@ async function call(url, path, init = {}, binary = false) {
 
 async function main(args) {
   if (args.length === 0 || args.includes('--help') || args[0] === 'help') { process.stdout.write(usage); return }
-  if (args.includes('--version')) { process.stdout.write('0.2.0\n'); return }
+  if (args.includes('--version')) { process.stdout.write('0.3.0\n'); return }
+  const workspaceOverride = valueOption(args, '--workspace')
+  if (workspaceOverride) args = args.filter((value, index) => value !== '--workspace' && args[index - 1] !== '--workspace')
   const config = await loadConfig()
+  const workspaceId = workspaceOverride ?? process.env.AMENTOI_WORKSPACE_ID ?? config.workspaceId
+  const coreHeaders = (key) => ({ 'x-api-key': key, ...(workspaceId ? { 'x-amen-workspace-id': workspaceId } : {}) })
   const [command, action, ...rest] = args
   if (command === 'config' && action === 'set') {
     const [service, raw] = rest
-    if (!services.has(service) || !raw) throw new Error('Usage: amentoi config set <service> <url>')
+    if (!isService(service) || !raw) throw new Error('Usage: amentoi config set <service> <url>')
     const url = new URL(raw)
     if (url.protocol !== 'https:' && url.hostname !== 'localhost' && url.hostname !== '127.0.0.1') throw new Error('HTTPS required')
     config.urls ??= {}
@@ -106,7 +119,7 @@ async function main(args) {
     return
   }
   if (command === 'services') {
-    console.log(JSON.stringify([...services].filter((service) => {
+    console.log(JSON.stringify([...new Set([...services, ...Object.keys(config.urls ?? {})])].filter((service) => {
       try { urlFor(config, service); return true } catch { return false }
     }), null, 2))
     return
@@ -115,18 +128,32 @@ async function main(args) {
   if (!key) throw new Error('Set AMENTOI_API_KEY or use amentoi auth save')
   const coreUrl = urlFor(config, 'core')
   if (command === 'auth' && action === 'status') {
-    console.log(JSON.stringify(await call(coreUrl, '/v1/tools', { headers: { 'x-api-key': key } }), null, 2))
+    console.log(JSON.stringify(await call(coreUrl, '/v1/key-workspaces', { headers: coreHeaders(key) }), null, 2))
     return
+  }
+  if (command === 'workspaces') {
+    if (action === 'current') { console.log(JSON.stringify({ data: { workspaceId: workspaceId ?? null } }, null, 2)); return }
+    const listed = await call(coreUrl, '/v1/key-workspaces', { headers: coreHeaders(key) })
+    if (action === 'list') { console.log(JSON.stringify(listed, null, 2)); return }
+    if (action === 'use') {
+      const matches = listed.data.filter((workspace) => workspace.id === rest[0] || workspace.slug === rest[0])
+      if (matches.length !== 1) throw new Error(matches.length === 0 ? 'Workspace is not available to this key' : 'Workspace slug is ambiguous; use its ID')
+      config.workspaceId = matches[0].id
+      await saveConfig(config)
+      console.log(JSON.stringify({ data: { selected: matches[0] } }, null, 2))
+      return
+    }
+    throw new Error('Unknown workspaces command')
   }
   async function serviceCall(service, method, path, body, binary = false) {
     let token = key
     if (service !== 'core') {
       const session = await call(coreUrl, `/v1/products/${service}/key-session`, {
-        method: 'POST', headers: { 'x-api-key': key },
+        method: 'POST', headers: coreHeaders(key),
       })
       token = session.data.token
     }
-    const headers = service === 'core' ? { 'x-api-key': token } : { authorization: `Bearer ${token}` }
+    const headers = service === 'core' ? coreHeaders(token) : { authorization: `Bearer ${token}` }
     if (body !== undefined) headers['content-type'] = 'application/json'
     return call(urlFor(config, service), path, {
       method, headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -164,7 +191,7 @@ async function main(args) {
     } else if (action === 'thumbnail') {
       const file = valueOption(rest, '--file')
       if (!file) throw new Error('link thumbnail requires --file PATH')
-      const tokenResponse = await call(coreUrl, '/v1/products/link/key-session', { method: 'POST', headers: { 'x-api-key': key } })
+      const tokenResponse = await call(coreUrl, '/v1/products/link/key-session', { method: 'POST', headers: coreHeaders(key) })
       const bytes = await readFile(file)
       const kind = bytes[0] === 0x89 && bytes[1] === 0x50 ? 'image/png' : bytes[0] === 0xff && bytes[1] === 0xd8 ? 'image/jpeg' : 'image/webp'
       result = await call(urlFor(config, 'link'), `/v1/link/pages/${encodeURIComponent(a)}/thumbnails`, {
@@ -190,6 +217,17 @@ async function main(args) {
       result = await serviceCall('forms', 'GET', `/v1/forms/${encodeURIComponent(a)}/submissions${query.size ? `?${query}` : ''}`)
     } else if (action === 'stats') result = await serviceCall('forms', 'GET', '/v1/dashboard')
     else throw new Error('Unknown forms command')
+  } else if (command === 'people') {
+    if (action === 'list') {
+      const query = new URLSearchParams()
+      for (const option of ['--query', '--limit']) { const value = valueOption(rest, option); if (value) query.set(option.slice(2), value) }
+      result = await serviceCall('people', 'GET', `/v1/people${query.size ? `?${query}` : ''}`)
+    } else if (action === 'get') result = await serviceCall('people', 'GET', `/v1/people/${encodeURIComponent(rest[0])}`)
+    else if (action === 'overview') result = await serviceCall('people', 'GET', '/v1/people/overview')
+    else if (action === 'stats') {
+      const days = valueOption(rest, '--days')
+      result = await serviceCall('people', 'GET', `/v1/people/stats/growth${days ? `?days=${encodeURIComponent(days)}` : ''}`)
+    } else throw new Error('Unknown people command')
   } else throw new Error('Unknown command. Run amentoi --help')
   console.log(JSON.stringify(result, null, 2))
 }

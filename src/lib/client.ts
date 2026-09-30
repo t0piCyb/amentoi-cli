@@ -1,5 +1,5 @@
 import { getToken } from './auth.js'
-import { serviceUrl, type Service } from './config.js'
+import { selectedWorkspace, serviceUrl, type Service } from './config.js'
 import { CliError } from './errors.js'
 
 type Method = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE'
@@ -22,17 +22,20 @@ function endpoint(base: string, path: string, query?: Record<string, string | un
 
 async function headersFor(service: Service): Promise<Record<string, string>> {
   const key = getToken()
-  if (service === 'core') return { 'x-api-key': key }
+  const workspaceId = selectedWorkspace()
+  const coreHeaders = { 'x-api-key': key, ...(workspaceId ? { 'x-amen-workspace-id': workspaceId } : {}) }
+  if (service === 'core') return coreHeaders
   const response = await fetchJson(endpoint(serviceUrl('core'), `/v1/products/${service}/key-session`), {
-    method: 'POST', headers: { 'x-api-key': key },
+    method: 'POST', headers: coreHeaders,
   }) as { data?: { token?: string } }
   if (!response.data?.token) throw new Error(`Core returned no ${service} session token`)
   return { Authorization: `Bearer ${response.data.token}` }
 }
 
-export async function request(service: Service, method: Method, path: string, body?: Body, query?: Record<string, string | undefined>): Promise<unknown> {
+export async function request(service: Service, method: Method, path: string, body?: Body, query?: Record<string, string | undefined>, extraHeaders?: Record<string, string>): Promise<unknown> {
   const headers = await headersFor(service)
   if (body !== undefined) headers['Content-Type'] = 'application/json'
+  Object.assign(headers, extraHeaders)
   return fetchJson(endpoint(serviceUrl(service), path, query), {
     method, headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   })
@@ -48,11 +51,11 @@ export function clientFor(service: Service) {
   }
 }
 
-export async function requestBytes(service: Service, method: Method, path: string, body: Body): Promise<{ bytes: Uint8Array; contentType: string | null }> {
+export async function requestBytes(service: Service, method: Method, path: string, body?: Body): Promise<{ bytes: Uint8Array; contentType: string | null }> {
   const headers = await headersFor(service)
-  headers['Content-Type'] = 'application/json'
+  if (body !== undefined) headers['Content-Type'] = 'application/json'
   const response = await fetch(endpoint(serviceUrl(service), path), {
-    method, headers, body: JSON.stringify(body), redirect: 'error', signal: AbortSignal.timeout(30_000),
+    method, headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }), redirect: 'error', signal: AbortSignal.timeout(30_000),
   })
   if (!response.ok) {
     const result = await response.json().catch(() => null) as { error?: { message?: string } } | null
@@ -61,11 +64,11 @@ export async function requestBytes(service: Service, method: Method, path: strin
   return { bytes: new Uint8Array(await response.arrayBuffer()), contentType: response.headers.get('content-type') }
 }
 
-export async function uploadBytes(service: Service, path: string, bytes: Uint8Array, contentType: string): Promise<unknown> {
+export async function uploadBytes(service: Service, path: string, bytes: Uint8Array, contentType: string, method: 'POST' | 'PUT' | 'PATCH' = 'POST'): Promise<unknown> {
   const headers = await headersFor(service)
   headers['Content-Type'] = contentType
   const response = await fetch(endpoint(serviceUrl(service), path), {
-    method: 'POST', headers, body: new Blob([Uint8Array.from(bytes)]), redirect: 'error', signal: AbortSignal.timeout(30_000),
+    method, headers, body: new Blob([Uint8Array.from(bytes)]), redirect: 'error', signal: AbortSignal.timeout(30_000),
   })
   const result = await response.json().catch(() => null) as { error?: { message?: string } } | null
   if (!response.ok) throw new CliError(response.status, result?.error?.message ?? response.statusText)

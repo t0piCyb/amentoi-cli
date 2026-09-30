@@ -67,3 +67,40 @@ test('API denial produces JSON error and nonzero exit', async () => {
     core.instance.close()
   }
 })
+
+test('one account key selects two workspaces and three product services', async () => {
+  const requests = []
+  const core = await server((request, response) => {
+    requests.push({ service: 'core', path: request.url, key: request.headers['x-api-key'], workspace: request.headers['x-amen-workspace-id'] })
+    response.setHeader('content-type', 'application/json')
+    response.end(JSON.stringify({ data: { token: `token-${request.headers['x-amen-workspace-id']}` }, meta: {} }))
+  })
+  const product = await server((request, response) => {
+    requests.push({ service: 'product', path: request.url, bearer: request.headers.authorization, key: request.headers['x-api-key'] })
+    response.setHeader('content-type', 'application/json')
+    response.end(JSON.stringify({ data: [], meta: {} }))
+  })
+  try {
+    const env = { AMENTOI_API_KEY: key, AMENTOI_CORE_URL: core.url,
+      AMENTOI_LINK_URL: product.url, AMENTOI_FORMS_URL: product.url, AMENTOI_PEOPLE_URL: product.url }
+    for (const [workspace, args] of [
+      ['personal-id', ['pages', 'list']],
+      ['organization-id', ['forms', 'list']],
+      ['organization-id', ['people', 'list']],
+    ]) {
+      const result = await run(['--workspace', workspace, ...args, '--json'], env)
+      assert.equal(result.code, 0, result.stderr)
+    }
+    assert.deepEqual(requests, [
+      { service: 'core', path: '/v1/products/link/key-session', key, workspace: 'personal-id' },
+      { service: 'product', path: '/v1/link/pages', bearer: 'Bearer token-personal-id', key: undefined },
+      { service: 'core', path: '/v1/products/forms/key-session', key, workspace: 'organization-id' },
+      { service: 'product', path: '/v1/forms', bearer: 'Bearer token-organization-id', key: undefined },
+      { service: 'core', path: '/v1/products/people/key-session', key, workspace: 'organization-id' },
+      { service: 'product', path: '/v1/people', bearer: 'Bearer token-organization-id', key: undefined },
+    ])
+  } finally {
+    core.instance.close()
+    product.instance.close()
+  }
+})
